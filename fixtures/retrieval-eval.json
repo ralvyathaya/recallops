@@ -1,0 +1,17 @@
+[
+  { "id": "core-pool", "service": "checkout-api", "query": "checkout latency 8s, db pool active 100 idle 0, acquire timeout 5000ms, no recent deploy", "expectedTitle": "Connection pool exhaustion signature", "core": true },
+  { "id": "pool-leak", "service": "checkout-api", "query": "orders hang while database sessions stay checked out and connections never return to the pool", "expectedTitle": "Connection pool exhaustion signature" },
+  { "id": "pool-capacity", "service": "checkout-api", "query": "all checkout database slots consumed during traffic spike; restart only briefly restores service", "expectedTitle": "Connection pool exhaustion signature" },
+  { "id": "pool-acquire", "service": "checkout-api", "query": "rising acquire wait with max pool connections pinned and no idle clients", "expectedTitle": "Connection pool exhaustion signature" },
+  { "id": "pool-session", "service": "checkout-api", "query": "missing release calls leak checkout sessions until the database pool saturates", "expectedTitle": "Connection pool exhaustion signature" },
+  { "id": "vendor-429", "service": "inventory-api", "query": "inventory vendor returns HTTP 429 and reads become stale during request burst", "expectedTitle": "Upstream rate-limit recovery" },
+  { "id": "vendor-backoff", "service": "inventory-api", "query": "upstream inventory quota exceeded; duplicate requests need coalescing and exponential backoff", "expectedTitle": "Upstream rate-limit recovery" },
+  { "id": "inventory-throttle", "service": "inventory-api", "query": "third-party stock API throttles callers and cache freshness drops", "expectedTitle": "Upstream rate-limit recovery" },
+  { "id": "inventory-burst", "service": "inventory-api", "query": "burst traffic causes upstream rate limiting on inventory lookups", "expectedTitle": "Upstream rate-limit recovery" },
+  { "id": "inventory-retry", "service": "inventory-api", "query": "429 retry storm against supplier availability endpoint", "expectedTitle": "Upstream rate-limit recovery" },
+  { "id": "deploy-cpu", "service": "checkout-api", "query": "checkout CPU and latency jumped immediately after the newest release", "expectedTitle": "Checkout rollback runbook" },
+  { "id": "serialization-regression", "service": "checkout-api", "query": "new checkout serialization code caused a CPU regression; compare against deploy time", "expectedTitle": "Checkout rollback runbook" },
+  { "id": "release-rollback", "service": "checkout-api", "query": "latency starts at release boundary and rollback is being considered", "expectedTitle": "Checkout rollback runbook" },
+  { "id": "post-deploy", "service": "checkout-api", "query": "fresh deployment correlates exactly with checkout performance regression", "expectedTitle": "Checkout rollback runbook" },
+  { "id": "version-regression", "service": "checkout-api", "query": "current checkout version consumes excess CPU but the previous version was healthy", "expectedTitle": "Checkout rollback runbook" }
+]
