@@ -1,0 +1,15 @@
+import { FlatCompat } from "@eslint/eslintrc";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const compat = new FlatCompat({
+  baseDirectory: path.dirname(fileURLToPath(import.meta.url)),
+});
+
+const config = [
+  ...compat.extends("next/core-web-vitals", "next/typescript"),
+  { ignores: [".next/**", "out/**", "cdk.out/**"] },
+  { files: ["next-env.d.ts"], rules: { "@typescript-eslint/triple-slash-reference": "off" } },
+];
+
+export default config;

@@ -1,0 +1,14 @@
+node_modules/
+.next/
+out/
+cdk.out/
+.env
+.env.local
+playwright-report/
+test-results/
+*.tsbuildinfo
+*.log
+
+# Large CLI binaries (download separately)
+ccloud.zip
+ccloud/ccloud.exe
