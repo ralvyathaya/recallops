@@ -4,7 +4,7 @@ import {
   InvokeModelCommand,
 } from "@aws-sdk/client-bedrock-runtime";
 import { z } from "zod";
-import type { Memory } from "@/lib/types";
+import type { ActionItem, Memory } from "@/lib/types";
 
 const region = process.env.AWS_REGION ?? "us-east-1";
 const client = new BedrockRuntimeClient({ region });
@@ -22,10 +22,11 @@ export const assessmentSchema = z.object({
       risk: z.enum(["low", "medium", "high"]),
       owner: z.string().min(2).max(80).default("Platform"),
     }),
-  ).max(3),
+  ).max(1),
 });
 
 export type AssessmentInput = z.infer<typeof assessmentSchema>;
+export type HistoricalAction = Pick<ActionItem, "title" | "rationale" | "risk" | "owner">;
 
 function deterministicEmbedding(text: string) {
   const values = Array.from({ length: 512 }, (_, index) => {
@@ -50,9 +51,9 @@ export async function embedText(text: string) {
   return payload.embedding;
 }
 
-export function fallbackAssessment(memories: Memory[], openActionTitle?: string): AssessmentInput {
+export function fallbackAssessment(memories: Memory[], openAction?: HistoricalAction): AssessmentInput {
   const best = memories.find((memory) => memory.status === "verified" && (memory.score ?? 0) >= 0.6);
-  if (!best) {
+  if (!best || !openAction) {
     return {
       summary: "No sufficiently trusted historical match was found. Continue diagnosis using current telemetry and preserve new evidence for future incidents.",
       matchStrength: "none",
@@ -61,28 +62,47 @@ export function fallbackAssessment(memories: Memory[], openActionTitle?: string)
     };
   }
   return {
-    summary: `The current symptoms align with verified memory “${best.title}”. ${openActionTitle ? `The earlier follow-up “${openActionTitle}” is still incomplete.` : "Validate the evidence before applying the prior mitigation."}`,
+    summary: `The current symptoms align with verified memory “${best.title}”. The earlier follow-up “${openAction.title}” is still incomplete.`,
     matchStrength: best.matchLabel === "strong" ? "strong" : "possible",
     citations: [best.id],
     actions: [{
-      title: openActionTitle ?? "Validate the prior mitigation against current telemetry",
-      rationale: `Use the verified evidence from ${best.title}; do not treat the previous temporary mitigation as a permanent fix.`,
-      risk: "low",
-      owner: "Platform",
+      title: openAction.title,
+      rationale: `${openAction.rationale} Verified memory “${best.title}” confirms the temporary mitigation did not close the loop.`,
+      risk: openAction.risk,
+      owner: openAction.owner ?? "Platform",
     }],
   };
 }
 
-export async function createAssessment(incidentSummary: string, memories: Memory[], openActionTitle?: string) {
-  if (process.env.USE_MOCK_SERVICES === "true") return fallbackAssessment(memories, openActionTitle);
+export function groundAssessment(input: unknown, memories: Memory[], openAction?: HistoricalAction): AssessmentInput {
+  const assessment = assessmentSchema.parse(input);
+  const trusted = memories.some((memory) =>
+    assessment.citations.includes(memory.id) && memory.status === "verified" && (memory.score ?? 0) >= 0.6);
+  if (!trusted || !openAction) return { ...assessment, actions: [] };
+  const proposal = assessment.actions[0];
+  if (!proposal) throw new Error("Bedrock omitted the required grounded action");
+  return {
+    ...assessment,
+    actions: [{
+      ...proposal,
+      title: openAction.title,
+      risk: openAction.risk,
+      owner: openAction.owner ?? "Platform",
+    }],
+  };
+}
+
+export async function createAssessment(incidentSummary: string, memories: Memory[], openAction?: HistoricalAction) {
+  if (process.env.USE_MOCK_SERVICES === "true") return fallbackAssessment(memories, openAction);
   const prompt = [
     "You are RecallOps, a cautious SRE incident-memory agent.",
     "Use only the supplied memory evidence. Cite memory UUIDs exactly.",
     "Only verified memories with score >= 0.60 may justify an action.",
-    "Actions are proposals for human approval, never claims of execution.",
+    "When a verified cited memory and an incomplete prior action are supplied, return exactly one action and copy the prior action title exactly.",
+    "Otherwise return no actions. Actions are proposals for human approval, never claims of execution.",
     `Current incident: ${incidentSummary}`,
     `Historical memory: ${JSON.stringify(memories.map(({ id, title, content, status, score, matchLabel }) => ({ id, title, content, status, score, matchLabel })))}`,
-    `Incomplete prior action: ${openActionTitle ?? "none"}`,
+    `Incomplete prior action: ${openAction ? JSON.stringify(openAction) : "none"}`,
   ].join("\n");
   const response = await client.send(new ConverseCommand({
     modelId: reasoningModel,
@@ -103,6 +123,7 @@ export async function createAssessment(incidentSummary: string, memories: Memory
                 citations: { type: "array", items: { type: "string" } },
                 actions: {
                   type: "array",
+                  maxItems: 1,
                   items: {
                     type: "object",
                     properties: {
@@ -125,7 +146,7 @@ export async function createAssessment(incidentSummary: string, memories: Memory
   }));
   const blocks = response.output?.message?.content ?? [];
   const input = blocks.find((block) => block.toolUse?.name === "record_assessment")?.toolUse?.input;
-  return assessmentSchema.parse(input);
+  return groundAssessment(input, memories, openAction);
 }
 
 export const bedrockModels = { reasoningModel, embeddingModel };
