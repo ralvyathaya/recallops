@@ -8,7 +8,7 @@ const compat = new FlatCompat({
 
 const config = [
   ...compat.extends("next/core-web-vitals", "next/typescript"),
-  { ignores: [".next/**", "out/**", "cdk.out/**"] },
+  { ignores: [".next/**", "out/**", "cdk.out*/**"] },
   { files: ["next-env.d.ts"], rules: { "@typescript-eslint/triple-slash-reference": "off" } },
 ];
 

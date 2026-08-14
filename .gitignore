@@ -1,7 +1,8 @@
 node_modules/
 .next/
 out/
-cdk.out/
+cdk.out*/
+cdk-outputs.json
 .env
 .env.local
 playwright-report/

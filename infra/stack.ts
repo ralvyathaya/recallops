@@ -50,7 +50,7 @@ export class RecallOpsStack extends Stack {
       secretObjectValue: { url: SecretValue.unsafePlainText("replace-me") },
     });
     const mcpSecret = new secrets.Secret(this, "McpSecret", {
-      description: "Read-only CockroachDB Cloud Managed MCP credentials",
+      description: "Cluster-scoped CockroachDB Cloud Managed MCP credentials",
       secretObjectValue: {
         apiKey: SecretValue.unsafePlainText("replace-me"),
         clusterId: SecretValue.unsafePlainText("replace-me"),
@@ -82,7 +82,6 @@ export class RecallOpsStack extends Stack {
       architecture: lambda.Architecture.ARM_64,
       timeout: Duration.seconds(30),
       memorySize: 768,
-      reservedConcurrentExecutions: 5,
       logGroup: apiLogs,
       environment: {
         ...commonEnvironment,
@@ -98,7 +97,6 @@ export class RecallOpsStack extends Stack {
       architecture: lambda.Architecture.ARM_64,
       timeout: Duration.seconds(30),
       memorySize: 512,
-      reservedConcurrentExecutions: 2,
       logGroup: workerLogs,
       environment: commonEnvironment,
       bundling: { minify: true, sourceMap: true, target: "node22", externalModules: [] },
