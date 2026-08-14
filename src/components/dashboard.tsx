@@ -11,13 +11,11 @@ import {
   Cloud,
   Database,
   FileCheck2,
-  Fingerprint,
   LoaderCircle,
   Play,
   RefreshCcw,
   Search,
   ShieldCheck,
-  Sparkles,
   TriangleAlert,
   X,
   Zap,
@@ -37,7 +35,7 @@ function SectionTitle({ eyebrow, title, accessory }: { eyebrow: string; title: s
   return <div className="section-title"><div><span>{eyebrow}</span><h2>{title}</h2></div>{accessory}</div>;
 }
 
-function MemoryCard({ memory, cited }: { memory: Memory; cited: boolean }) {
+function MemoryCard({ memory, cited, sourceRef, openAction }: { memory: Memory; cited: boolean; sourceRef?: string; openAction?: ActionItem }) {
   return (
     <article className={`memory-card ${cited ? "cited" : ""}`}>
       <div className="memory-top">
@@ -47,17 +45,20 @@ function MemoryCard({ memory, cited }: { memory: Memory; cited: boolean }) {
       <h3>{memory.title}</h3>
       <p>{memory.content}</p>
       <div className="memory-meta">
+        {sourceRef && <span className="source-ref">Source {sourceRef}</span>}
         <span>{memory.service}</span><span>{memory.kind}</span>
         {memory.matchLabel && <span className={`match-${memory.matchLabel}`}>{memory.matchLabel}</span>}
       </div>
+      {openAction && <div className="memory-followup"><ArchiveRestore size={14} /><span><strong>Approved fix still incomplete</strong>{openAction.title}</span></div>}
       {cited && <div className="citation"><FileCheck2 size={14} /> Evidence cited by assessment</div>}
     </article>
   );
 }
 
-function ActionCard({ action, busy, onDecision, onComplete }: {
+function ActionCard({ action, busy, sourceRef, onDecision, onComplete }: {
   action: ActionItem;
   busy: boolean;
+  sourceRef?: string;
   onDecision: (decision: "approve" | "reject") => void;
   onComplete: () => void;
 }) {
@@ -68,6 +69,7 @@ function ActionCard({ action, busy, onDecision, onComplete }: {
         <span className={`risk ${action.risk}`}>{action.risk} risk</span>
       </div>
       <h3>{action.title}</h3>
+      {sourceRef && <div className="action-source"><ArchiveRestore size={14} /> Recalled from unfinished action in {sourceRef}</div>}
       <p>{action.rationale}</p>
       <div className="action-footer">
         <span>Owner · {action.owner ?? "Unassigned"}</span>
@@ -103,10 +105,22 @@ export function Dashboard() {
   const currentActions = useMemo(() => state?.actions.filter((action) => action.incidentId === current?.id) ?? [], [state, current]);
   const postmortem = state?.memories.find((memory) => memory.incidentId === current?.id && memory.kind === "postmortem");
   const cited = new Set(state?.assessment?.citations ?? []);
-  const matchedMemories = state?.assessment?.memories ?? state?.memories.filter((memory) => memory.incidentId !== current?.id).slice(0, 3) ?? [];
-  const timeline = state?.events.filter((event) => current ? event.incidentId === current.id : true).slice(-8) ?? [];
+  const matchedMemories = state?.assessment?.memories ?? state?.memories
+    .filter((memory) => memory.incidentId !== current?.id)
+    .sort((left, right) => Number(state.actions.some((action) => action.sourceMemoryId === right.id && ["pending_approval", "approved"].includes(action.status)))
+      - Number(state.actions.some((action) => action.sourceMemoryId === left.id && ["pending_approval", "approved"].includes(action.status))))
+    .slice(0, 3) ?? [];
+  const timeline = current ? state?.events.filter((event) => event.incidentId === current.id).slice(-8) ?? [] : [];
   const activeAction = currentActions.find((action) => ["pending_approval", "approved"].includes(action.status));
   const complete = currentActions.some((action) => action.status === "completed");
+  const mcpTrace = state?.assessment?.toolTrace.find((entry) => entry.name === "mcp.select_query");
+  const mcpDegraded = mcpTrace?.status === "degraded";
+  const sourceRef = (memoryId?: string) => {
+    const memory = state?.memories.find((item) => item.id === memoryId);
+    return state?.incidents.find((incident) => incident.id === memory?.incidentId)?.externalRef;
+  };
+  const unfinishedAction = (memoryId: string) => state?.actions.find((action) =>
+    action.sourceMemoryId === memoryId && ["pending_approval", "approved"].includes(action.status));
 
   let step = 1;
   if (current) step = 2;
@@ -119,24 +133,29 @@ export function Dashboard() {
   if (!state) return <main className="loading-screen"><LoaderCircle className="spin" /><p>Opening isolated incident sandbox…</p>{error && <span>{error}</span>}</main>;
 
   return (
-    <main className="shell">
+    <main className={`shell ${current ? "has-incident" : ""}`}>
       <header className="topbar">
-        <div className="brand"><div className="brand-mark"><Fingerprint size={20} /></div><div><strong>RecallOps</strong><span>Incident memory war room</span></div></div>
+        <div className="brand">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img className="brand-mark" src="/recallops-mark.svg" alt="RecallOps memory loop" width="36" height="36" />
+          <div><strong>RecallOps</strong><span>Incident memory for reliability teams</span></div>
+        </div>
         <div className="systems" aria-label="System status">
           <StatusPill tone="healthy"><Cloud size={13} /> AWS {isCloudMode ? "live" : "simulated"}</StatusPill>
-          <StatusPill tone="healthy"><Database size={13} /> Cockroach persistent</StatusPill>
-          <StatusPill tone={state.assessment?.degraded.includes("mcp") ? "warning" : "healthy"}><Zap size={13} /> MCP {state.assessment?.degraded.includes("mcp") ? "degraded" : "ready"}</StatusPill>
+          <StatusPill tone="healthy"><Database size={13} /> CockroachDB live</StatusPill>
+          <StatusPill tone={mcpDegraded ? "warning" : mcpTrace?.status === "success" ? "healthy" : "neutral"}><Zap size={13} /> MCP {mcpDegraded ? "degraded" : mcpTrace?.status === "success" ? "verified" : "checks on recall"}</StatusPill>
         </div>
         <button className="reset" disabled={!!busy} onClick={() => run("reset", clientApi.reset)}><RefreshCcw size={15} /> Reset demo</button>
       </header>
 
-      <section className="hero">
+      <section className={`hero ${current ? "compact" : ""}`}>
         <div>
-          <div className="kicker"><span>LIVE SANDBOX</span><i /> Session {state.workspace.id.slice(0, 8)}</div>
-          <h1>When incidents repeat,<br /><em>memory closes the loop.</em></h1>
+          <div className="kicker"><span>LIVE INCIDENT SANDBOX</span><i /> Synthetic history <i /> Session {state.workspace.id.slice(0, 8)}</div>
+          <h1>When incidents repeat, <em>memory closes the loop.</em></h1>
           <p>Recall verified operational history, catch unfinished fixes, and keep every production action behind human approval.</p>
+          <div className="demo-disclosure"><Cloud size={15} /> Synthetic incident data · Real AWS + CockroachDB execution</div>
         </div>
-        <div className="demo-progress" aria-label={`Demo step ${step} of 7`}>
+        <div className="demo-progress" aria-label={`Demo step ${step} of 7`} aria-live="polite">
           <div className="progress-label"><span>Guided proof</span><strong>{step}/7</strong></div>
           <div className="progress-track"><span style={{ width: `${step / 7 * 100}%` }} /></div>
           <p>{step === 1 ? "Inject the recurring checkout incident" : step === 2 ? "Ask the agent to recall operational memory" : step === 3 ? "Review and approve the grounded proposal" : step === 4 ? "Record completion evidence" : step === 5 ? "Resolve and generate a postmortem" : step === 6 ? "Verify the new memory" : "Learning loop complete — refresh to prove persistence"}</p>
@@ -155,21 +174,21 @@ export function Dashboard() {
           <div><span>Status</span><strong className={current ? `state-${current.status}` : ""}>{current?.status ?? "ready"}</strong></div>
           <div><span>Artifact</span><strong>{current?.artifactKey ? "S3 stored" : "—"}</strong></div>
         </div>
-        {!current && <button className="button emergency" disabled={!!busy} onClick={() => run("trigger", clientApi.trigger)}>{busy === "trigger" ? <LoaderCircle className="spin" size={17} /> : <Play size={17} />} Simulate incident</button>}
-        {current && !state.assessment && <button className="button recall" disabled={!!busy} onClick={() => run("recall", () => clientApi.recall(current.id))}>{busy === "recall" ? <LoaderCircle className="spin" size={17} /> : <Search size={17} />} Recall past incidents</button>}
+        {!current && <button className="button emergency" disabled={!!busy} onClick={() => run("trigger", clientApi.trigger)}>{busy === "trigger" ? <><LoaderCircle className="spin" size={17} /> Ingesting through CloudWatch…</> : <><Play size={17} /> Simulate incident</>}</button>}
+        {current && !state.assessment && <button className="button recall" disabled={!!busy} onClick={() => run("recall", () => clientApi.recall(current.id))}>{busy === "recall" ? <><LoaderCircle className="spin" size={17} /> Searching CockroachDB memory…</> : <><Search size={17} /> Recall past incidents</>}</button>}
         {current && complete && current.status !== "resolved" && <button className="button resolve" disabled={!!busy} onClick={() => run("resolve", () => clientApi.resolve(current.id))}>{busy === "resolve" ? <LoaderCircle className="spin" size={17} /> : <ArchiveRestore size={17} />} Resolve incident</button>}
         {postmortem?.status === "proposed" && <button className="button resolve" disabled={!!busy} onClick={() => run("verify", () => clientApi.verify(postmortem.id))}>{busy === "verify" ? <LoaderCircle className="spin" size={17} /> : <ShieldCheck size={17} />} Verify resolution</button>}
-        {postmortem?.status === "verified" && <div className="loop-complete"><CheckCircle2 size={20} /><span>Memory verified<strong>Refresh-safe learning complete</strong></span></div>}
+        {postmortem?.status === "verified" && <div className="loop-complete" role="status"><CheckCircle2 size={20} /><span>Memory verified<strong>Refresh-safe learning complete</strong></span></div>}
       </section>
 
       <section className="war-grid">
         <div className="panel timeline-panel">
-          <SectionTitle eyebrow="Append-only audit" title="Incident timeline" accessory={<Activity size={18} />} />
+          <SectionTitle eyebrow="Current incident" title="Activity timeline" accessory={<Activity size={18} />} />
           <div className="timeline">
             {timeline.length ? timeline.map((event) => <div className="timeline-row" key={event.id}>
-              <div className={`timeline-icon ${event.source}`}>{event.source === "human" ? <ShieldCheck size={14} /> : event.source === "agent" ? <Sparkles size={14} /> : event.source === "cloudwatch" ? <CircleAlert size={14} /> : <Database size={14} />}</div>
-              <div><div><strong>{event.eventType.replaceAll("_", " ")}</strong><time>{time(event.occurredAt)}</time></div><p>{event.message}</p><span>{event.source}</span></div>
-            </div>) : <div className="empty"><Clock3 /><strong>No active timeline</strong><p>Simulate an incident to start the evidence trail.</p></div>}
+              <div className={`timeline-icon ${event.source}`}>{event.source === "human" ? <ShieldCheck size={14} /> : event.source === "agent" ? <Activity size={14} /> : event.source === "cloudwatch" ? <CircleAlert size={14} /> : <Database size={14} />}</div>
+              <div><div><strong>{event.eventType.replaceAll("_", " ")}</strong><time>{time(event.occurredAt)}</time></div><p>{event.eventType === "artifact_ingested" ? "Evidence stored in versioned S3" : event.message}</p><span>{event.source}</span></div>
+            </div>) : <div className="empty"><Clock3 /><strong>No current incident</strong><p>Seeded history stays in memory. Simulate an incident to begin a new audit trail.</p></div>}
           </div>
         </div>
 
@@ -183,14 +202,28 @@ export function Dashboard() {
               <div><span>Deploy age</span><strong>19h</strong><i><b className="green" style={{ width: "34%" }} /></i></div>
             </div>
             <div className="log-box"><div><span /><span /><span /><strong>cloudwatch / checkout-api</strong></div>{liveLogs.map((log, index) => <code key={log}><i>{String(index + 1).padStart(2, "0")}</i>{log}</code>)}</div>
-            {state.assessment && <div className="assessment"><div><Sparkles size={17} /><strong>Agent assessment</strong><span>{state.assessment.matchStrength} match</span></div><p>{state.assessment.summary}</p></div>}
-          </> : <div className="empty large"><Activity /><strong>Healthy baseline</strong><p>The synthetic P1 will enter through CloudWatch and preserve its raw artifact in S3.</p></div>}
+            {state.assessment && <div className="assessment"><div><Search size={17} /><strong>Grounded assessment</strong><span>{state.assessment.matchStrength} match</span></div><p>{state.assessment.summary}</p></div>}
+          </> : <div className="empty large explainer">
+            <div><strong>Incident memory that closes unfinished work</strong><p>RecallOps helps reliability teams turn recurring incidents into verified operational memory.</p></div>
+            <ol className="proof-flow" aria-label="How RecallOps works">
+              <li><CircleAlert size={15} /><span><strong>Detect</strong>CloudWatch signal</span></li>
+              <li><Search size={15} /><span><strong>Recall</strong>CockroachDB memory</span></li>
+              <li><ShieldCheck size={15} /><span><strong>Approve</strong>Human decision</span></li>
+              <li><Database size={15} /><span><strong>Learn</strong>Verified postmortem</span></li>
+            </ol>
+          </div>}
         </div>
 
         <div className="panel memory-panel">
-          <SectionTitle eyebrow="CockroachDB memory" title="Relevant matches" accessory={<span className="candidate-count">{matchedMemories.length} candidates</span>} />
+          <SectionTitle eyebrow={state.assessment ? "CockroachDB memory" : "Seeded historical memory"} title={state.assessment ? "Relevant matches" : "Historical baseline"} accessory={<span className="candidate-count">{matchedMemories.length} {state.assessment ? "candidates" : "seeded records"}</span>} />
           <div className="memory-list">
-            {matchedMemories.map((memory) => <MemoryCard key={memory.id} memory={memory} cited={cited.has(memory.id)} />)}
+            {postmortem && <article className={`learned-memory ${postmortem.status}`}>
+              <div><span>{postmortem.status === "verified" ? <CheckCircle2 size={15} /> : <ArchiveRestore size={15} />} New learned memory</span><strong>{postmortem.status}</strong></div>
+              <h3>{postmortem.title}</h3>
+              <p>Postmortem stored in S3 and added to CockroachDB memory after human verification.</p>
+              <span>Source {current?.externalRef}</span>
+            </article>}
+            {matchedMemories.map((memory) => <MemoryCard key={memory.id} memory={memory} cited={cited.has(memory.id)} sourceRef={sourceRef(memory.id)} openAction={unfinishedAction(memory.id)} />)}
           </div>
         </div>
       </section>
@@ -198,20 +231,28 @@ export function Dashboard() {
       <section className="lower-grid">
         <div className="panel actions-panel">
           <SectionTitle eyebrow="Human control plane" title="Approval-gated actions" accessory={activeAction ? <StatusPill tone="warning">Decision required</StatusPill> : undefined} />
-          {currentActions.length ? currentActions.map((action) => <ActionCard key={action.id} action={action} busy={!!busy} onDecision={(decision) => run("decision", () => clientApi.decide(action.id, decision))} onComplete={() => run("complete", () => clientApi.complete(action.id))} />) : <div className="empty horizontal"><ShieldCheck /><div><strong>No production mutations</strong><p>Grounded proposals appear here only after vector recall and MCP verification.</p></div></div>}
+          {currentActions.length ? currentActions.map((action) => <ActionCard key={action.id} action={action} busy={!!busy} sourceRef={sourceRef(action.sourceMemoryId)} onDecision={(decision) => run("decision", () => clientApi.decide(action.id, decision))} onComplete={() => run("complete", () => clientApi.complete(action.id))} />) : <div className="empty horizontal"><ShieldCheck /><div><strong>No production mutations</strong><p>One grounded proposal appears only after vector recall and MCP verification.</p></div></div>}
         </div>
         <div className="panel trace-panel">
           <button className="trace-toggle" onClick={() => setTraceOpen((open) => !open)} aria-expanded={traceOpen}><div><span>Observable by design</span><strong>Agent tool trace</strong></div><ChevronDown className={traceOpen ? "open" : ""} /></button>
           {traceOpen && <div className="trace-list">
-            {state.assessment?.toolTrace.length ? state.assessment.toolTrace.map((entry, index) => <div className="trace-row" key={`${entry.name}-${index}`}>
-              <span className={`trace-check ${entry.status}`}>{entry.status === "success" ? <Check size={13} /> : <TriangleAlert size={13} />}</span>
-              <div><div><strong>{entry.name}</strong><time>{entry.latencyMs}ms</time></div><p>{entry.detail}</p></div>
-            </div>) : <div className="empty"><Zap /><strong>Trace waiting</strong><p>Vector → MCP → Bedrock → transaction</p></div>}
+            {state.assessment?.toolTrace.length ? state.assessment.toolTrace.map((entry, index) => {
+              const hasPlan = entry.name === "vector_search" && entry.detail.includes(" · ");
+              const summary = hasPlan ? entry.detail.split(" · ")[0] : entry.detail;
+              return <div className="trace-row" key={`${entry.name}-${index}`}>
+                <span className={`trace-check ${entry.status}`}>{entry.status === "success" ? <Check size={13} /> : <TriangleAlert size={13} />}</span>
+                <div>
+                  <div><strong>{entry.name}</strong><time>{entry.latencyMs}ms</time></div>
+                  <p>{summary}</p>
+                  {hasPlan && <details><summary>View query plan</summary><pre>{entry.detail}</pre></details>}
+                </div>
+              </div>;
+            }) : <div className="empty"><Zap /><strong>Trace waiting</strong><p>Vector → MCP → Bedrock → transaction</p></div>}
           </div>}
         </div>
       </section>
 
-      <footer><span><Database size={14} /> Memory expires with this sandbox in 24 hours</span><span>RecallOps · AWS us-east-1 · CockroachDB Cloud</span></footer>
+      <footer><span><Database size={14} /> Public sandbox · synthetic history · expires in 24 hours</span><span>RecallOps · AWS us-east-1 · CockroachDB Cloud</span></footer>
     </main>
   );
 }
