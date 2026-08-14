@@ -37,12 +37,21 @@ async function main() {
       const embedding = await embedText(fixture.query);
       const { matches } = await retrieveMemories(workspaceId, incident, embedding);
       const rank = matches.findIndex((memory) => memory.title === fixture.expectedTitle) + 1;
-      results.push({ id: fixture.id, expected: fixture.expectedTitle, rank: rank || null, top: matches[0]?.title ?? null, passAt3: rank > 0 && rank <= 3, core: !!fixture.core });
+      results.push({
+        id: fixture.id,
+        expected: fixture.expectedTitle,
+        rank: rank || null,
+        top: matches[0]?.title ?? null,
+        topScore: matches[0]?.score ?? null,
+        passAt3: rank > 0 && rank <= 3,
+        core: !!fixture.core,
+      });
     }
     const recallAt3 = results.filter((result) => result.passAt3).length / results.length;
     const coreTop1 = results.filter((result) => result.core).every((result) => result.rank === 1);
-    console.log(JSON.stringify({ fixtureCount: results.length, recallAt3, coreTop1, results }, null, 2));
-    if (recallAt3 < 0.8 || !coreTop1) process.exitCode = 1;
+    const coreTrusted = results.filter((result) => result.core).every((result) => (result.topScore ?? 0) >= 0.6);
+    console.log(JSON.stringify({ fixtureCount: results.length, recallAt3, coreTop1, coreTrusted, results }, null, 2));
+    if (recallAt3 < 0.8 || !coreTop1 || !coreTrusted) process.exitCode = 1;
   } finally {
     await query("DELETE FROM workspaces WHERE id = $1", [workspaceId]);
   }

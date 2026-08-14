@@ -4,7 +4,7 @@ import { createScenario, liveIncidentTemplate } from "./scenario";
 import type { ApiEnvelope, DashboardState, Memory, ToolTrace } from "./types";
 
 const storageKey = "recallops-demo-v1";
-export const isCloudMode = process.env.NEXT_PUBLIC_API_MODE === "cloud";
+export const isCloudMode = process.env.NEXT_PUBLIC_API_MODE !== "local";
 const wait = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 function loadLocal() {
@@ -75,7 +75,7 @@ async function localRecall(incidentId: string) {
   if (state.assessment?.incidentId === incidentId) return state;
   const incident = state.incidents.find((item) => item.id === incidentId);
   if (!incident) throw new Error("Incident not found");
-  const match = state.memories.find((memory) => memory.title === "Connection pool exhaustion signature");
+  const match = state.memories.find((memory) => memory.title === "Checkout database pool at 100% with acquire timeouts");
   if (!match) throw new Error("Seed memory not found");
   match.similarity = 0.94;
   match.score = 0.923;
@@ -101,7 +101,7 @@ async function localRecall(incidentId: string) {
   });
   const trace: ToolTrace[] = [
     { name: "vector_search", status: "success", latencyMs: 86, detail: "3 candidates · vector index scan memories_embedding_idx with workspace prefix" },
-    { name: "mcp.select_query", status: "success", latencyMs: 112, detail: "Managed MCP confirmed historical action status = approved, completed_at = NULL" },
+    { name: "mcp.select_query", status: "success", latencyMs: 112, detail: "MCP found approved incomplete action: Add connection leak detector and capacity guard" },
     { name: "bedrock.converse", status: "success", latencyMs: 681, detail: "Structured assessment via global.amazon.nova-2-lite-v1:0" },
     { name: "crdb.transaction", status: "success", latencyMs: 34, detail: "Atomic agent run + pending approval action" },
   ];
