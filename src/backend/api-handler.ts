@@ -28,10 +28,11 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
   const traceId = event.requestContext.requestId || crypto.randomUUID();
   const path = event.rawPath.replace(/\/$/, "") || "/";
   const method = event.requestContext.http.method;
+  const cookies = event.headers.cookie ?? event.cookies?.join("; ");
   try {
     const secret = await sessionSecret();
     if (method === "POST" && path === "/api/session") {
-      const existing = cookieValue(event.headers.cookie, "recallops_session");
+      const existing = cookieValue(cookies, "recallops_session");
       const verified = verifySessionCookie(existing, secret);
       const workspaceId = verified ?? randomUUID();
       const token = verified && existing ? existing : createSessionCookie(secret, workspaceId);
@@ -39,7 +40,7 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
       return response(200, traceId, state, { cookie: cookieHeader(token) });
     }
 
-    const token = cookieValue(event.headers.cookie, "recallops_session");
+    const token = cookieValue(cookies, "recallops_session");
     const sessionWorkspaceId = verifySessionCookie(token, secret);
     if (!sessionWorkspaceId) return response(401, traceId, null, { error: { code: "SESSION_REQUIRED", message: "Start or resume a sandbox session first" } });
     const workspaceId = uuid.parse(sessionWorkspaceId);
