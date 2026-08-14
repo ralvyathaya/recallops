@@ -38,19 +38,22 @@ function SectionTitle({ eyebrow, title, accessory }: { eyebrow: string; title: s
 function MemoryCard({ memory, cited, sourceRef, openAction }: { memory: Memory; cited: boolean; sourceRef?: string; openAction?: ActionItem }) {
   return (
     <article className={`memory-card ${cited ? "cited" : ""}`}>
-      <div className="memory-top">
-        <span className={`memory-status ${memory.status}`}>{memory.status}</span>
-        {memory.score != null && <strong>{percentage(memory.score)} match</strong>}
+      <div className="memory-heading">
+        <div>
+          <span className={`memory-status ${memory.status}`}>{memory.status}</span>
+          <h3>{memory.title}</h3>
+        </div>
+        {memory.score != null && <div className="memory-score"><strong>{percentage(memory.score)}</strong><span>relevance</span></div>}
       </div>
-      <h3>{memory.title}</h3>
       <p>{memory.content}</p>
-      <div className="memory-meta">
-        {sourceRef && <span className="source-ref">Source {sourceRef}</span>}
-        <span>{memory.service}</span><span>{memory.kind}</span>
-        {memory.matchLabel && <span className={`match-${memory.matchLabel}`}>{memory.matchLabel}</span>}
-      </div>
-      {openAction && <div className="memory-followup"><ArchiveRestore size={14} /><span><strong>Approved fix still incomplete</strong>{openAction.title}</span></div>}
-      {cited && <div className="citation"><FileCheck2 size={14} /> Evidence cited by assessment</div>}
+      {openAction && <div className="memory-followup"><ArchiveRestore size={14} /><span><small>Approved fix still incomplete</small><strong>{openAction.title}</strong></span></div>}
+      <footer className="memory-footer">
+        <div className="memory-meta">
+          {sourceRef && <span className="source-ref">{sourceRef}</span>}
+          <span>{memory.service}</span><span>{memory.kind}</span>
+        </div>
+        {cited && <div className="citation"><FileCheck2 size={13} /> Used in assessment</div>}
+      </footer>
     </article>
   );
 }
@@ -202,7 +205,13 @@ export function Dashboard() {
               <div><span>Deploy age</span><strong>19h</strong><i><b className="green" style={{ width: "34%" }} /></i></div>
             </div>
             <div className="log-box"><div><span /><span /><span /><strong>cloudwatch / checkout-api</strong></div>{liveLogs.map((log, index) => <code key={log}><i>{String(index + 1).padStart(2, "0")}</i>{log}</code>)}</div>
-            {state.assessment && <div className="assessment"><div><Search size={17} /><strong>Grounded assessment</strong><span>{state.assessment.matchStrength} match</span></div><p>{state.assessment.summary}</p></div>}
+            {state.assessment && <div className="assessment">
+              <div className="assessment-head">
+                <div className="assessment-title"><Activity size={15} /><div><span>Recurrence assessment</span><strong>{state.assessment.matchStrength} evidence</strong></div></div>
+                <div className="assessment-basis"><span>Evidence basis</span><strong>{state.assessment.citations.length} verified memory · MCP checked</strong></div>
+              </div>
+              <p>{state.assessment.summary}</p>
+            </div>}
           </> : <div className="empty large explainer">
             <div><strong>Incident memory that closes unfinished work</strong><p>RecallOps helps reliability teams turn recurring incidents into verified operational memory.</p></div>
             <ol className="proof-flow" aria-label="How RecallOps works">
