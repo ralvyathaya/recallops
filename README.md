@@ -1,8 +1,14 @@
+<p align="center"><img src="public/recallops-mark.svg" width="72" alt="RecallOps memory loop logo"></p>
+
 # RecallOps
 
 **An incident-response agent that remembers whether the last fix actually finished.**
 
+**[Open the live AWS demo](https://d309nxlq8e8jph.cloudfront.net)** · Synthetic incident data, real AWS and CockroachDB execution.
+
 RecallOps is a public, approval-gated SRE war room. When a recurring incident arrives through CloudWatch, it stores the raw evidence in S3, retrieves trusted operational memory from CockroachDB's distributed vector index, verifies unfinished work through the CockroachDB Cloud Managed MCP server, and asks Amazon Bedrock for a grounded action proposal. A human must approve every action. Resolution creates a new postmortem memory that becomes reusable only after verification.
+
+![RecallOps light operations console](docs/assets/recallops-light.png)
 
 This repository includes a credential-free local judge mode and the complete AWS CDK/CockroachDB implementation. Local mode is clearly labeled **AWS simulated**; the deployed mode uses the real services.
 
@@ -21,6 +27,10 @@ Open `http://localhost:3000`, then:
 4. **Verify resolution**, refresh the page, and see that the learned state remains.
 
 The browser demo uses `localStorage` only when `NEXT_PUBLIC_API_MODE=local`. Cloud mode never substitutes local state for CockroachDB.
+
+## Why the demo uses synthetic history
+
+Operational memory only proves its value when there is something trustworthy to recall. Every 24-hour sandbox therefore starts with three clearly labeled synthetic incidents: one verified recurrence with an unfinished permanent fix and two realistic red herrings. The current `INC-2077` incident, embedding, retrieval scores, MCP verification, Bedrock assessment, approval record, postmortem, and verified memory are still created live through the production AWS and CockroachDB pipeline. No customer data or production remediation is involved.
 
 ## Why memory is the product
 
@@ -43,7 +53,7 @@ flowchart LR
     Lambda --> CW["CloudWatch Logs"]
     Lambda --> S3["Versioned S3 evidence"]
     Lambda --> CRDB["CockroachDB Cloud"]
-    Lambda --> MCP["Managed MCP · read only"]
+    Lambda --> MCP["Managed MCP · controlled verification"]
     Lambda --> BR["Amazon Bedrock"]
     CW --> Worker["Worker Lambda"]
     Worker --> S3
@@ -69,11 +79,11 @@ Titan Embeddings V2 creates normalized 512-dimensional embeddings. Recall takes 
 
 ### 2. CockroachDB Cloud Managed MCP
 
-The runtime connects to `https://cockroachlabs.cloud/mcp` using a cluster-scoped service-account key. It discovers `select_query`, then executes one fixed query after UUID validation to inspect historical action state. The model never writes SQL. If MCP is unavailable, RecallOps performs the equivalent parameterized direct read and exposes `MCP degraded` in the UI and trace. See [`src/backend/mcp.ts`](src/backend/mcp.ts).
+The runtime connects to `https://cockroachlabs.cloud/mcp` using a cluster-scoped service-account key. It discovers `select_query`, then executes one fixed query after UUID validation to inspect historical action state. The validated MCP result is the authoritative action supplied to Bedrock; direct SQL runs only as a visibly degraded fallback. The model never writes SQL. See [`src/backend/mcp.ts`](src/backend/mcp.ts).
 
 ### 3. Agent-ready `ccloud` CLI
 
-The cluster, service account, API key, cluster inspection, and backup check are managed through `ccloud`. Reproducible commands and a redacted evidence template are in [`docs/CCLOUD_EVIDENCE.md`](docs/CCLOUD_EVIDENCE.md). Admin credentials are used only for schema initialization; the runtime gets DML on the six application tables.
+The Serverless cluster is provisioned and inspected through `ccloud`; role grants are also verified through the CLI. The Managed MCP service account and API key are created in CockroachDB Cloud Access Management, then stored in AWS Secrets Manager. Reproducible commands and redacted real outputs are in [`docs/CCLOUD_EVIDENCE.md`](docs/CCLOUD_EVIDENCE.md). Admin credentials are used only for schema initialization; the runtime gets DML on the six application tables.
 
 References: [vector indexes](https://www.cockroachlabs.com/docs/stable/vector-indexes), [ccloud command reference](https://www.cockroachlabs.com/docs/cockroachcloud/ccloud-reference), and [CockroachDB Cloud MCP](https://www.cockroachlabs.com/docs/cockroachcloud/connect-to-the-cockroachdb-cloud-mcp-server).
 
@@ -113,7 +123,7 @@ infra/                         AWS CDK stack
 src/backend/api-handler.ts     Public HTTP Lambda
 src/backend/worker-handler.ts  CloudWatch ingestion + cleanup Lambda
 src/backend/repository.ts      Transactions and persistent memory operations
-src/backend/mcp.ts             Read-only Managed MCP verification
+src/backend/mcp.ts             Fixed-query Managed MCP verification
 src/backend/bedrock.ts         Embeddings and structured assessment
 src/components/dashboard.tsx   War-room UI
 test/                          Deterministic unit tests
@@ -159,8 +169,8 @@ Prerequisites:
 - AWS account authenticated locally, AWS CLI, and CDK v2 bootstrap in `us-east-1`.
 - CockroachDB Cloud account and `ccloud` CLI.
 - Bedrock access to Nova 2 Lite and Titan Text Embeddings V2 in the target account.
-- A CockroachDB Basic cluster and separate admin/runtime SQL credentials.
-- A read-only, cluster-scoped MCP service-account API key.
+- A CockroachDB Serverless cluster and separate admin/runtime SQL credentials.
+- A cluster-scoped Managed MCP service-account API key.
 
 ### 1. Provision CockroachDB
 
@@ -207,8 +217,8 @@ Do not replace the generated session secret. Redeploy after rebuilding whenever 
 - The site and evidence buckets are private; CloudFront uses Origin Access Control.
 - Session cookies are HMAC-signed, `Secure`, `HttpOnly`, `SameSite=Lax`, and expire after 24 hours.
 - Public input is limited to fixed demo commands and UUIDs. There is no upload or arbitrary SQL endpoint.
-- Runtime database access is DML-only. MCP is read-only and uses a separate cluster-scoped key.
-- Recall is limited to five calls per minute and 30 per sandbox per day; Lambda concurrency is capped at 5/2.
+- Runtime database access is DML-only. MCP uses a separate cluster-scoped service account, while the application exposes only a fixed, UUID-validated `select_query` call.
+- Recall is limited to five calls per minute and 30 per sandbox per day; API Gateway throttling provides an additional cost boundary.
 - Missing S3 evidence does not erase the incident; it is marked degraded.
 - MCP failure uses a safe direct-read fallback and is visibly degraded.
 - Bedrock failure returns retrieval-only evidence and creates no action.

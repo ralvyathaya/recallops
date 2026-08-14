@@ -1,94 +1,103 @@
-# ccloud provisioning and evidence
+# ccloud provisioning and redacted evidence
 
-This file is both the reproducible runbook and the submission evidence template. Commands follow the current [`ccloud` reference](https://www.cockroachlabs.com/docs/cockroachcloud/ccloud-reference). **Do not paste API secrets, SQL passwords, connection strings, account IDs, or unsanitized output into the repository.**
+These are the commands and sanitized outputs used for the deployed RecallOps cluster. No API key, password, connection string, AWS account ID, full CockroachDB cluster ID, or session cookie is committed here.
 
-## Provisioning commands
+## Reproducible provisioning
 
-```bash
+RecallOps used `ccloud 0.6.12` (`CCAPI 2023-04-10`). In this CLI release the valid free plan name is `serverless`, and cluster inspection is `cluster info`:
+
+```powershell
 ccloud auth login
-ccloud cluster create basic recallops us-east-1 --cloud AWS --spend-limit 50
-ccloud cluster get recallops
-ccloud cluster backup list recallops
-
-ccloud service-account create recallops-mcp --description "RecallOps read-only Managed MCP runtime"
-ccloud service-account api-key create SERVICE_ACCOUNT_ID recallops-mcp-key
+ccloud cluster create serverless recallops us-east-1 --cloud AWS --spend-limit 0
+ccloud cluster info recallops -o json
 ```
 
-Choose a spend limit appropriate to the account. Store the one-time API-key secret directly in AWS Secrets Manager. Assign the service account only the read-only role scoped to the RecallOps cluster in CockroachDB Cloud Access Management.
-
-Create separate SQL users in the cluster. Initialize [`../db/init.sql`](../db/init.sql) with the admin URL, then grant the runtime role:
+The cluster was created successfully on AWS. The SQL administrator initialized [`../db/init.sql`](../db/init.sql), then granted the schema-defined runtime role to the separate application user:
 
 ```sql
-CREATE USER recallops_app WITH PASSWORD 'generated-outside-git';
 GRANT recallops_runtime TO recallops_app;
+SHOW GRANTS ON ROLE recallops_runtime;
 ```
 
-The Lambda connection string must use `recallops_app`, database `recallops`, port `26257`, and `sslmode=verify-full`.
+The Lambda connection string uses `recallops_app`, database `recallops`, port `26257`, and `sslmode=verify-full`. The administrator credential is not used by the runtime.
 
-## Redacted submission evidence
-
-Populate this section only after the real cluster exists.
-
-### Cluster create
+## Cluster inspection — 2026-08-09
 
 ```text
-Command: ccloud cluster create basic recallops us-east-1 --cloud AWS --spend-limit [REDACTED]
-Result: [PENDING REAL DEPLOYMENT]
-Cluster ID: [REDACTED except final 6 characters]
-Region: [PENDING]
-Plan: [PENDING]
-CockroachDB version: [PENDING]
+Command: ccloud cluster info recallops -o json
+
+name: recallops
+id: [REDACTED]-3dba10
+cloud_provider: AWS
+plan: SERVERLESS
+region: us-east-1 (primary)
+state: CREATED
+cockroach_version: v26.2.5
+spend_limit: 0
+network_visibility: PUBLIC
 ```
 
-### Cluster inspection and managed backup
+`ccloud cluster backup list` is not available in the installed CLI and is intentionally not claimed as evidence.
+
+## Cluster-scoped MCP service account
+
+The service account and one-time API key were created in CockroachDB Cloud Access Management because this `ccloud` release does not expose service-account creation commands. The API key was written directly to AWS Secrets Manager.
+
+`ccloud` was then used to inspect the actual principal's grants:
 
 ```text
-Command: ccloud cluster get recallops
-Sanitized output: [PENDING REAL DEPLOYMENT]
+Command: ccloud role get [REDACTED_PRINCIPAL_ID] -o json
 
-Command: ccloud cluster backup list recallops
-Sanitized output: [PENDING REAL DEPLOYMENT]
+role: CLUSTER_OPERATOR_WRITER
+resource.type: CLUSTER
+resource.id: [REDACTED]-3dba10
+organization role: ORG_MEMBER
 ```
 
-### Service account
+This control-plane role is accurately described as Cluster Operator, not read-only. Runtime safety comes from the application boundary: [`../src/backend/mcp.ts`](../src/backend/mcp.ts) validates both IDs as UUIDs and invokes only the Managed MCP `select_query` tool with a fixed `SELECT id, title, status, risk, rationale, owner ... LIMIT 1` statement. The model cannot provide SQL or call MCP directly.
+
+## Runtime SQL role proof
 
 ```text
-Command: ccloud service-account get [REDACTED_ID]
-Name: [PENDING]
-Cluster role: [PENDING — must be read-only]
-API key ID: [REDACTED]
-API key secret: NEVER COMMIT
+Command: SHOW GRANTS ON ROLE recallops_runtime;
+
+role_name          member          is_admin
+recallops_runtime  recallops_app   false
 ```
 
-### Vector index proof
+The role's DML permissions are defined explicitly in [`../db/init.sql`](../db/init.sql); it cannot alter the schema.
 
-Run with an admin or diagnostic SQL connection:
+## Distributed vector index proof
+
+```text
+Command: SHOW INDEXES FROM memories;
+
+table_name  index_name                    column_name   definition
+memories    memories_embedding_idx        workspace_id workspace_id
+memories    memories_embedding_idx        embedding    embedding
+memories    memories_embedding_idx        id           id (implicit)
+```
+
+The deployed index is a workspace-prefixed CockroachDB vector index:
 
 ```sql
-SHOW INDEXES FROM recallops.public.memories;
-EXPLAIN SELECT id
-FROM recallops.public.memories
-WHERE workspace_id = 'SANDBOX_UUID'
-ORDER BY embedding <=> '[REDACTED_512_DIM_VECTOR]'::VECTOR
-LIMIT 20;
+CREATE VECTOR INDEX IF NOT EXISTS memories_embedding_idx
+ON memories (workspace_id, embedding vector_cosine_ops);
 ```
 
-```text
-SHOW INDEXES sanitized result: [PENDING REAL DEPLOYMENT]
-EXPLAIN sanitized result: [PENDING REAL DEPLOYMENT]
-Expected index name: memories_embedding_idx
-```
+Every live recall also persists the sanitized `EXPLAIN` result in `agent_runs.tool_trace`. The production UI shows its compact summary and exposes the complete plan under **View query plan**.
 
-### Managed MCP proof
+## Managed MCP runtime proof
 
-Capture the expanded trace from the production UI. It must show:
+Sanitized output from a successful production golden-path run:
 
 ```text
 Tool: mcp.select_query
-Mode: read-only
-Cluster: [REDACTED except final 6 characters]
-Result fields: id, title, status, risk
-Status: [PENDING REAL DEPLOYMENT]
+Cluster: [REDACTED]-3dba10
+Statement: fixed SELECT of id, title, status, risk, rationale, and owner
+Result: historical INC-1042 action inspected
+Trace status: success
+UI detail: MCP found approved incomplete action: Add connection leak detector and capacity guard
 ```
 
-Never include the Authorization header, service-account secret, database URL, raw session cookie, or complete cluster identifier.
+No Authorization header, MCP response payload, service-account secret, database URL, or complete identifier is stored in the repository.
