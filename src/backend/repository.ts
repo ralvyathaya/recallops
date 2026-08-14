@@ -20,6 +20,15 @@ type Row = QueryResultRow & Record<string, unknown>;
 const iso = (value: unknown) => value instanceof Date ? value.toISOString() : String(value);
 const optionalIso = (value: unknown) => value ? iso(value) : undefined;
 
+export function transactionTrace(actionCount: number, startedAt: number): ToolTrace {
+  return {
+    name: "crdb.transaction",
+    status: "success",
+    latencyMs: Math.max(1, Date.now() - startedAt),
+    detail: `Atomic agent run + ${actionCount} pending action(s); SQLSTATE 40001 retry enabled`,
+  };
+}
+
 function mapIncident(row: Row): Incident {
   return {
     id: String(row.id),
@@ -218,7 +227,7 @@ export async function ingestIncident(
         [crypto.randomUUID(), workspaceId, id, input.service, `Live signal: ${input.title}`, input.summary, vectorLiteral(input.embedding)],
       );
       await insertEvent(client, workspaceId, id, "cloudwatch", "incident_detected", `${input.externalRef} detected from CloudWatch signal`);
-      await insertEvent(client, workspaceId, id, "system", "artifact_ingested", input.artifactKey ? `Evidence stored at s3://${input.artifactKey}` : "Incident stored without artifact");
+      await insertEvent(client, workspaceId, id, "system", "artifact_ingested", input.artifactKey ? "Evidence stored in versioned S3" : "Incident stored without artifact");
       return mapIncident(inserted.rows[0]);
     }
     const existing = await client.query<Row>(
@@ -275,6 +284,7 @@ export async function saveAssessment(
   latencyMs: number,
   modelId: string,
 ) {
+  const transactionStarted = Date.now();
   return withTransaction(async (client) => {
     const runId = crypto.randomUUID();
     const actionIds: string[] = [];
@@ -291,12 +301,7 @@ export async function saveAssessment(
       );
       actionIds.push(id);
     }
-    const persistedTrace: ToolTrace[] = [...toolTrace, {
-      name: "crdb.transaction",
-      status: "success",
-      latencyMs: 0,
-      detail: `Atomic agent run + ${actionIds.length} pending action(s); SQLSTATE 40001 retry enabled`,
-    }];
+    const persistedTrace: ToolTrace[] = [...toolTrace, transactionTrace(actionIds.length, transactionStarted)];
     await client.query(
       `INSERT INTO agent_runs
         (id, workspace_id, incident_id, model_id, summary, match_strength, tool_trace, citations, retrieval, degraded, latency_ms)

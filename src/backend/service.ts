@@ -1,4 +1,4 @@
-import { bedrockModels, createAssessment, embedText } from "./bedrock";
+import { bedrockModels, createAssessment, embedText, type HistoricalAction } from "./bedrock";
 import { inspectIncidentViaMcp } from "./mcp";
 import {
   assertRecallRate,
@@ -30,6 +30,24 @@ export interface IncidentSignal {
 }
 
 const elapsed = (started: number) => Date.now() - started;
+
+export async function verifyHistoricalAction(
+  workspaceId: string,
+  incidentId: string,
+  inspect = inspectIncidentViaMcp,
+  fallback = getOpenActionForIncident,
+): Promise<{ action?: HistoricalAction; detail: string; degraded: boolean }> {
+  try {
+    const result = await inspect(workspaceId, incidentId);
+    return { action: result.action, detail: result.detail, degraded: false };
+  } catch (error) {
+    return {
+      action: await fallback(workspaceId, incidentId),
+      detail: `Managed MCP unavailable; fixed direct read used (${error instanceof Error ? error.message : "unknown error"})`,
+      degraded: true,
+    };
+  }
+}
 
 export async function startSession(workspaceId: string) {
   await ensureWorkspace(workspaceId);
@@ -101,22 +119,18 @@ export async function recallIncident(workspaceId: string, incidentId: string) {
   });
 
   const sourceIncidentId = matches.find((memory) => memory.status === "verified" && (memory.score ?? 0) >= 0.6)?.incidentId;
-  let openAction = sourceIncidentId ? await getOpenActionForIncident(workspaceId, sourceIncidentId) : undefined;
+  let openAction: HistoricalAction | undefined;
   const mcpStarted = Date.now();
   if (sourceIncidentId) {
-    try {
-      const result = await inspectIncidentViaMcp(workspaceId, sourceIncidentId);
-      trace.push({ name: "mcp.select_query", status: "success", latencyMs: elapsed(mcpStarted), detail: result.detail });
-    } catch (error) {
-      degraded.push("mcp");
-      openAction = await getOpenActionForIncident(workspaceId, sourceIncidentId);
-      trace.push({
-        name: "mcp.select_query",
-        status: "degraded",
-        latencyMs: elapsed(mcpStarted),
-        detail: `Managed MCP unavailable; fixed direct read used (${error instanceof Error ? error.message : "unknown error"})`,
-      });
-    }
+    const verification = await verifyHistoricalAction(workspaceId, sourceIncidentId);
+    openAction = verification.action;
+    if (verification.degraded) degraded.push("mcp");
+    trace.push({
+      name: "mcp.select_query",
+      status: verification.degraded ? "degraded" : "success",
+      latencyMs: elapsed(mcpStarted),
+      detail: verification.detail,
+    });
   } else {
     trace.push({ name: "mcp.select_query", status: "skipped", latencyMs: 0, detail: "No trusted source incident to verify" });
   }
@@ -124,7 +138,7 @@ export async function recallIncident(workspaceId: string, incidentId: string) {
   const modelStarted = Date.now();
   let assessment;
   try {
-    assessment = await createAssessment(incident.summary, matches, openAction?.title);
+    assessment = await createAssessment(incident.summary, matches, openAction);
     trace.push({ name: "bedrock.converse", status: "success", latencyMs: elapsed(modelStarted), detail: `Structured assessment via ${bedrockModels.reasoningModel}` });
   } catch (error) {
     degraded.push("bedrock");
