@@ -10,9 +10,9 @@ RecallOps is a public, approval-gated SRE war room. When a recurring incident ar
 
 ![RecallOps light operations console](docs/assets/recallops-light.png)
 
-This repository includes a credential-free local judge mode and the complete AWS CDK/CockroachDB implementation. Local mode is clearly labeled **AWS simulated**; the deployed mode uses the real services.
+This repository contains a credential-free local mode and the complete AWS CDK/CockroachDB implementation. Local mode is clearly labeled **AWS simulated**; the deployed mode uses the real services.
 
-## The 30-second proof
+## Quick tour
 
 ```bash
 npm install
@@ -26,11 +26,24 @@ Open `http://localhost:3000`, then:
 3. **Approve**, **Mark completed**, then **Resolve incident**.
 4. **Verify resolution**, refresh the page, and see that the learned state remains.
 
-The browser demo uses `localStorage` only when `NEXT_PUBLIC_API_MODE=local`. Cloud mode never substitutes local state for CockroachDB.
+The browser uses `localStorage` only when `NEXT_PUBLIC_API_MODE=local`. Cloud mode never substitutes local state for CockroachDB.
 
-## Why the demo uses synthetic history
+A complete guided walkthrough:
 
-Operational memory only proves its value when there is something trustworthy to recall. Every 24-hour sandbox therefore starts with three clearly labeled synthetic incidents: one verified recurrence with an unfinished permanent fix and two realistic red herrings. The current `INC-2077` incident, embedding, retrieval scores, MCP verification, Bedrock assessment, approval record, postmortem, and verified memory are still created live through the production AWS and CockroachDB pipeline. No customer data or production remediation is involved.
+1. `INC-1042` already shows an approved fix that remains incomplete — the gap RecallOps is designed to close.
+2. Click **Simulate incident**. Within 15 seconds, `INC-2077` appears with `checkout-api`, P1 severity, and an S3 artifact indicator.
+3. Click **Recall past incidents**. The first match is **Checkout database pool at 100% with acquire timeouts**, marked `verified` and `strong`.
+4. The assessment warns that the restart was temporary and shows exactly one proposal: **Add connection leak detector and capacity guard**, recalled from unfinished work in `INC-1042`.
+5. Expand **Agent tool trace** and inspect all four steps: `vector_search` with the `memories_embedding_idx` `EXPLAIN` detail, `mcp.select_query` verifying historical action state, `bedrock.converse` using Nova 2 Lite, and `crdb.transaction` storing the run and pending action atomically.
+6. Click **Approve**, then **Mark completed**. Both human decisions enter the append-only timeline.
+7. Click **Resolve incident**, then **Verify resolution**. The postmortem moves from `proposed` to `verified`.
+8. Refresh the page. **Memory verified** and the incident state remain.
+
+No button performs real infrastructure remediation. The action is a sandbox record and every mutation is human-approved.
+
+## Seed history
+
+Operational memory only proves its value when there is something trustworthy to recall. Every 24-hour sandbox starts with three clearly labeled synthetic incidents: one verified recurrence with an unfinished permanent fix and two realistic red herrings. The current `INC-2077` incident, embedding, retrieval scores, MCP verification, Bedrock assessment, approval record, postmortem, and verified memory are still created live through the production AWS and CockroachDB pipeline. No customer data or production remediation is involved.
 
 ## Why memory is the product
 
@@ -46,7 +59,7 @@ Traditional incident copilots summarize the current alert. RecallOps answers the
 
 ```mermaid
 flowchart LR
-    Judge["Judge"] --> CF["CloudFront"]
+    User["User"] --> CF["CloudFront"]
     CF --> Web["Private S3 static dashboard"]
     CF --> API["API Gateway HTTP API"]
     API --> Lambda["API Lambda · Node.js 22"]
@@ -64,7 +77,7 @@ flowchart LR
 
 The frontend is a Next.js 15 static export. Two Lambda functions contain the runtime: one HTTP handler and one CloudWatch ingestion/cleanup worker. There is no ORM, agent framework, container, NAT gateway, or separate vector database.
 
-## CockroachDB challenge tools
+## CockroachDB integrations
 
 ### 1. Distributed Vector Indexing
 
@@ -127,7 +140,7 @@ src/backend/mcp.ts             Fixed-query Managed MCP verification
 src/backend/bedrock.ts         Embeddings and structured assessment
 src/components/dashboard.tsx   War-room UI
 test/                          Deterministic unit tests
-e2e/                           Playwright judge golden path
+e2e/                           Playwright golden-path E2E
 ```
 
 ## Local development
@@ -140,7 +153,7 @@ npm ci
 npm run dev
 ```
 
-Keep `NEXT_PUBLIC_API_MODE=local`. No AWS or CockroachDB credential is needed. The deterministic local path mirrors the state machine and is intended for UI review, development, and CI—not as evidence that cloud integrations ran.
+Keep `NEXT_PUBLIC_API_MODE=local`. No AWS or CockroachDB credential is needed. The deterministic local path mirrors the state machine and is intended for UI review, development, and CI — not as evidence that cloud integrations ran.
 
 Quality checks:
 
@@ -207,10 +220,16 @@ Do not replace the generated session secret. Redeploy after rebuilding whenever 
 ### 3. Verify production
 
 1. Open the CloudFront URL in an incognito window.
-2. Complete the steps in [`JUDGES.md`](JUDGES.md) three times.
+2. Complete the guided walkthrough above three times.
 3. Confirm `SHOW INDEXES FROM memories` contains `memories_embedding_idx`.
 4. Expand the UI trace and confirm `mcp.select_query` and `bedrock.converse` are successful.
 5. Refresh after verification and confirm the learned postmortem persists.
+
+Expected degradation behavior:
+
+- `MCP degraded`: direct parameterized read is used; recall may continue.
+- `Bedrock degraded`: retrieval remains visible; no new action is created.
+- `Artifact degraded`: incident remains usable; evidence loss is explicit.
 
 ## Security and failure behavior
 
@@ -222,7 +241,7 @@ Do not replace the generated session secret. Redeploy after rebuilding whenever 
 - Missing S3 evidence does not erase the incident; it is marked degraded.
 - MCP failure uses a safe direct-read fallback and is visibly degraded.
 - Bedrock failure returns retrieval-only evidence and creates no action.
-- Logs contain trace ID, incident ID, stage, and latency—not secrets, raw prompts, or hidden reasoning.
+- Logs contain trace ID, incident ID, stage, and latency — not secrets, raw prompts, or hidden reasoning.
 - CloudWatch alarms cover API errors, worker errors, and API 5xx responses.
 
 ## Teardown
@@ -233,18 +252,6 @@ These commands delete cloud resources and data. Confirm the target account and c
 npx cdk destroy
 ccloud cluster delete recallops
 ```
-
-## Submission checklist
-
-- [ ] Public GitHub repository URL
-- [ ] MIT license detected in GitHub About
-- [ ] Functional CloudFront URL tested in incognito
-- [ ] Redacted ccloud, MCP, vector-index, and AWS evidence committed
-- [ ] Public YouTube/Vimeo video under 3 minutes
-- [ ] Three consecutive production dry runs
-
-See [`JUDGES.md`](JUDGES.md) for the two-minute judging path and explicit scoring-criteria mapping.
-The production recording storyboard is in [`docs/VIDEO_SCRIPT.md`](docs/VIDEO_SCRIPT.md).
 
 ## License
 
